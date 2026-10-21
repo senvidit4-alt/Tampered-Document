@@ -158,7 +158,8 @@ def analyze_patch_forensics(
     image_bgr: np.ndarray,
     raw_ela_gray: np.ndarray,
     segments: List[Dict],
-    neighborhood_pad: int = 12
+    neighborhood_pad: int = 12,
+    digilocker_verified: bool = False
 ) -> List[Dict]:
     """
     Analyzes each segmented target patch across multi-dimensional physical forensics:
@@ -170,12 +171,14 @@ def analyze_patch_forensics(
 
     Evaluates ALL OCR text segments on the document (Candidate Name, Roll No, Subject Names,
     Marks, Grades, Totals, Dates) to catch multi-field edits typical of online PDF/web editors.
+    When digilocker_verified is True, suppresses digital vector false positives.
 
     Args:
         image_bgr: BGR document image array.
         raw_ela_gray: Float32 unscaled ELA difference map.
         segments: List of segment dicts from segment_document_targets.
         neighborhood_pad: Padding around tight bounds to capture local eraser context.
+        digilocker_verified: Whether document passed DigiLocker PKI cryptographic seal verification.
 
     Returns:
         List of enriched segment dicts with forensic scores, triggers, and tamper flags.
@@ -268,6 +271,9 @@ def analyze_patch_forensics(
     median_ela_p90 = float(np.median(peer_ela_p90s)) if peer_ela_p90s else 1.0
     median_drift = float(np.median(peer_drifts)) if peer_drifts else 0.5
 
+    # Determine whether document is physical scanned paper (grain >= 5.5) or born-digital vector
+    is_scanned_paper = (median_noise >= 5.5)
+
     # 3. Second Pass: Evaluate Peer-Relative Forensic Triggers across ALL Text Segments
     for s in enriched:
         clean_txt = s.get("text", "").strip()
@@ -303,62 +309,81 @@ def analyze_patch_forensics(
         # -------------------------------------------------------------
         # TRIGGER B: Digital Whiteout Box & Perimeter Color Discontinuity
         # -------------------------------------------------------------
-        if bg_val >= 251.0 and (bg_val - median_bg_mean) >= 5.0:
-            triggers.append("DIGITAL_WHITEOUT_PATCH")
-            reasons.append(f"Digital Whiteout Patch (RGB: {bg_val:.1f} vs peer {median_bg_mean:.1f})")
-        elif boundary_step >= 6.0 and boundary_step >= 2.0 * (median_boundary + 1.0):
+        # A true whiteout patch requires a physical perimeter boundary discontinuity
+        # or localized erasure of actual physical paper grain.
+        if boundary_step >= 6.0 and boundary_step >= 2.0 * (median_boundary + 1.0):
             triggers.append("DIGITAL_WHITEOUT_PATCH")
             reasons.append(f"Patch Perimeter Discontinuity ({boundary_step:.1f} ΔRGB)")
-        elif median_noise >= 3.0 and noise_val <= 0.35 * median_noise and s["flat_bg_ratio"] >= 0.60:
+        elif is_scanned_paper and not digilocker_verified and noise_val <= 0.35 * median_noise and s["flat_bg_ratio"] >= 0.60:
             triggers.append("DIGITAL_WHITEOUT_PATCH")
             reasons.append(f"Paper Grain Erased / Digital Whiteout (Noise: {noise_val:.1f} vs baseline {median_noise:.1f})")
+        elif median_bg_mean <= 235.0 and bg_val >= 250.0 and (bg_val - median_bg_mean) >= 18.0 and boundary_step >= 4.0:
+            triggers.append("DIGITAL_WHITEOUT_PATCH")
+            reasons.append(f"Digital Whiteout Patch (RGB: {bg_val:.1f} vs peer {median_bg_mean:.1f})")
 
         # -------------------------------------------------------------
         # TRIGGER C: ELA Double-Compression Energy Discontinuity
         # -------------------------------------------------------------
         ela_ratio = (ela_p90 + 1e-4) / (median_ela_p90 + 1e-4)
-        if (ela_ratio >= 3.0 and ela_p90 >= 4.0) or (ela_ratio >= 2.2 and ela_p90 >= 6.0) or ela_p90 >= 12.0:
-            triggers.append("ELA_DISCONTINUITY")
-            reasons.append(f"ELA Compression Discontinuity (p90: {ela_p90:.2f}, {ela_ratio:.1f}x peer median)")
+        if not digilocker_verified:
+            if is_grade:
+                if (ela_ratio >= 3.0 and ela_p90 >= 4.0) or (ela_ratio >= 2.2 and ela_p90 >= 6.0) or ela_p90 >= 14.0:
+                    triggers.append("ELA_DISCONTINUITY")
+                    reasons.append(f"ELA Compression Discontinuity (p90: {ela_p90:.2f}, {ela_ratio:.1f}x peer median)")
+            else:
+                # For non-grade text (headers/titles), large glyphs naturally have higher DCT energy;
+                # require high ratio, large p90, and perimeter boundary corroboration
+                if ela_ratio >= 4.0 and ela_p90 >= 20.0 and boundary_step >= 4.5:
+                    triggers.append("ELA_DISCONTINUITY")
+                    reasons.append(f"ELA Compression Discontinuity (p90: {ela_p90:.2f}, {ela_ratio:.1f}x peer median)")
 
         # -------------------------------------------------------------
         # TRIGGER D: Font Stroke Sharpness & Ink Intensity Mismatch
         # -------------------------------------------------------------
-        if median_ink >= 25.0 and ink_val <= 10.0:
-            triggers.append("FONT_INK_MISMATCH")
-            reasons.append(f"Font Ink Intensity Mismatch (Luma: {ink_val:.1f} vs peer {median_ink:.1f})")
-        elif median_edge >= 25.0 and edge_grad >= 2.5 * median_edge:
-            triggers.append("FONT_INK_MISMATCH")
-            reasons.append(f"Synthetic Font Edge Sharpness Spike ({edge_grad:.1f} vs peer {median_edge:.1f})")
+        if not digilocker_verified:
+            if median_ink >= 25.0 and ink_val <= 10.0:
+                triggers.append("FONT_INK_MISMATCH")
+                reasons.append(f"Font Ink Intensity Mismatch (Luma: {ink_val:.1f} vs peer {median_ink:.1f})")
+            elif median_edge >= 25.0 and edge_grad >= 2.5 * median_edge:
+                triggers.append("FONT_INK_MISMATCH")
+                reasons.append(f"Synthetic Font Edge Sharpness Spike ({edge_grad:.1f} vs peer {median_edge:.1f})")
 
         # -------------------------------------------------------------
         # TRIGGER E: Font Edge Sharpness Disparity
         # -------------------------------------------------------------
-        sharp_ratio = (sharp_val + 1e-4) / (median_sharpness + 1e-4)
-        if median_sharpness >= 1000.0 and (sharp_ratio >= 3.2 or (sharp_ratio <= 0.22 and sharp_val > 0)):
-            triggers.append("FONT_SHARPNESS_DISPARITY")
-            reasons.append(f"Font Sharpness Disparity ({sharp_ratio:.1f}x peer median)")
+        if not digilocker_verified:
+            sharp_ratio = (sharp_val + 1e-4) / (median_sharpness + 1e-4)
+            if median_sharpness >= 1000.0 and sharp_ratio >= 3.5 and edge_grad >= 2.0 * median_edge:
+                triggers.append("FONT_SHARPNESS_DISPARITY")
+                reasons.append(f"Font Sharpness Disparity ({sharp_ratio:.1f}x peer median)")
 
         # -------------------------------------------------------------
         # Verdict & Confidence Computation (Corroboration & Zero-Shot Signals)
         # -------------------------------------------------------------
         num_triggers = len(triggers)
         is_tampered_patch = False
-        if num_triggers >= 2:
-            is_tampered_patch = True
-        elif num_triggers == 1:
-            if "DIGITAL_WHITEOUT_PATCH" in triggers and (bg_val >= 252.0 and (bg_val - median_bg_mean) >= 5.5):
+        if digilocker_verified:
+            # DigiLocker cryptographically verified documents:
+            # All digital template elements and candidate text are authentic.
+            # Only flag if there is hard proof of grade manipulation:
+            if is_grade and (drift_abs >= 2.0 or boundary_step >= 6.0):
                 is_tampered_patch = True
-            elif "DIGITAL_WHITEOUT_PATCH" in triggers and (median_noise >= 3.0 and noise_val <= 0.32 * median_noise):
+            elif num_triggers >= 2 and boundary_step >= 5.5:
                 is_tampered_patch = True
-            elif "FONT_INK_MISMATCH" in triggers and (median_ink >= 25.0 and ink_val <= 8.0):
+        else:
+            if num_triggers >= 2:
                 is_tampered_patch = True
-            elif "BASELINE_DRIFT" in triggers and drift_abs >= 2.5:
-                is_tampered_patch = True
-            elif "ELA_DISCONTINUITY" in triggers and (ela_ratio >= 3.0 and ela_p90 >= 8.0):
-                is_tampered_patch = True
-            elif "FONT_SHARPNESS_DISPARITY" in triggers and sharp_ratio >= 4.0:
-                is_tampered_patch = True
+            elif num_triggers == 1:
+                if "DIGITAL_WHITEOUT_PATCH" in triggers and boundary_step >= 6.0:
+                    is_tampered_patch = True
+                elif "DIGITAL_WHITEOUT_PATCH" in triggers and is_scanned_paper and noise_val <= 0.30 * median_noise:
+                    is_tampered_patch = True
+                elif "FONT_INK_MISMATCH" in triggers and (median_ink >= 25.0 and ink_val <= 8.0):
+                    is_tampered_patch = True
+                elif "BASELINE_DRIFT" in triggers and drift_abs >= 1.8:
+                    is_tampered_patch = True
+                elif "ELA_DISCONTINUITY" in triggers and (ela_ratio >= 3.5 and ela_p90 >= 10.0 and (is_grade or boundary_step >= 4.0)):
+                    is_tampered_patch = True
 
         if is_tampered_patch:
             s["is_tampered"] = True
@@ -381,7 +406,8 @@ def analyze_patch_forensics(
 
 def run_forensic_scan(
     image_bgr: np.ndarray,
-    segments: List[Dict]
+    segments: List[Dict],
+    digilocker_verified: bool = False
 ) -> Dict[str, Union[np.ndarray, List[Dict], bool, float]]:
     """
     Master forensic scanning pipeline:
@@ -400,7 +426,9 @@ def run_forensic_scan(
         }
     """
     raw_ela_gray, ela_heatmap_bgr = compute_ela_map(image_bgr, quality=85)
-    analyzed_segments = analyze_patch_forensics(image_bgr, raw_ela_gray, segments)
+    analyzed_segments = analyze_patch_forensics(
+        image_bgr, raw_ela_gray, segments, digilocker_verified=digilocker_verified
+    )
 
     flagged_patches = [s for s in analyzed_segments if s.get("is_tampered", False)]
     document_tampered = len(flagged_patches) > 0

@@ -413,6 +413,19 @@ def query_hipolabs_universities_api(query_name: str, timeout_sec: float = 2.5) -
 # Master Institution Accreditation Verifier
 # ---------------------------------------------------------------------------
 
+def _matches_name_or_alias(candidate_norm: str, query_norm: str) -> bool:
+    """Accurate alias matching requiring word boundaries for acronyms (< 5 chars)."""
+    if not candidate_norm or not query_norm:
+        return False
+    if candidate_norm == query_norm:
+        return True
+    if len(candidate_norm) < 5:
+        return bool(re.search(r"\b" + re.escape(candidate_norm) + r"\b", query_norm))
+    if len(query_norm) < 5:
+        return bool(re.search(r"\b" + re.escape(query_norm) + r"\b", candidate_norm))
+    return candidate_norm in query_norm or query_norm in candidate_norm
+
+
 def verify_institution(
     institution_name: str,
     check_online: bool = True
@@ -453,7 +466,7 @@ def verify_institution(
     # -------------------------------------------------------------
     for b_item in DIPLOMA_MILL_BLACKLIST:
         b_norm = _normalize_name(b_item)
-        if b_norm in norm_name or norm_name in b_norm:
+        if _matches_name_or_alias(b_norm, norm_name):
             return {
                 "is_recognized": False,
                 "is_blacklisted": True,
@@ -472,7 +485,7 @@ def verify_institution(
         all_names = [canon] + aliases
         for name in all_names:
             n_norm = _normalize_name(name)
-            if n_norm == norm_name or n_norm in norm_name or norm_name in n_norm:
+            if _matches_name_or_alias(n_norm, norm_name):
                 return {
                     "is_recognized": True,
                     "is_blacklisted": False,
@@ -488,7 +501,7 @@ def verify_institution(
         all_names = [canon] + aliases
         for name in all_names:
             n_norm = _normalize_name(name)
-            if n_norm == norm_name or n_norm in norm_name or norm_name in n_norm:
+            if _matches_name_or_alias(n_norm, norm_name):
                 return {
                     "is_recognized": True,
                     "is_blacklisted": False,
@@ -504,7 +517,7 @@ def verify_institution(
         all_names = [canon] + aliases
         for name in all_names:
             n_norm = _normalize_name(name)
-            if n_norm == norm_name or n_norm in norm_name or norm_name in n_norm:
+            if _matches_name_or_alias(n_norm, norm_name):
                 return {
                     "is_recognized": True,
                     "is_blacklisted": False,

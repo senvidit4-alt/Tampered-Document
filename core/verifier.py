@@ -378,14 +378,14 @@ def verify_document(
     # -------------------------------------------------------------------------
     # CHECK 2: Pixel-Level Analysis (ELA Residuals, Baseline Drift, Sharpness)
     # -------------------------------------------------------------------------
-    forensic_result = run_forensic_scan(aligned_bgr, segments)
+    forensic_result = run_forensic_scan(aligned_bgr, segments, digilocker_verified=is_digilocker)
     ela_heatmap_bgr = forensic_result["ela_heatmap"]
     analyzed_segments = forensic_result["analyzed_segments"]
     flagged_patches = forensic_result["flagged_patches"]
     max_pixel_confidence = forensic_result["max_tamper_confidence"]
 
     # Cross-signal container forensics: Correlate stripped EXIF with Check 2 pixel micro-forgeries
-    if check1_res.get("is_stripped_exif") and len(flagged_patches) > 0 and check1_res.get("status") == "PASS":
+    if check1_res.get("is_stripped_exif") and len(flagged_patches) > 0 and check1_res.get("status") == "PASS" and not is_digilocker:
         check1_res = run_check1_file_forensics(check1_input, pixel_flagged_count=len(flagged_patches))
         is_manipulated_or_genai = (check1_res.get("status") == "FAIL")
 

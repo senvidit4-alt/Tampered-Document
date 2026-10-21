@@ -384,9 +384,11 @@ def run_step0_intake(
 
         # Check Result Status (REMARKS: PASS / RESULT: FAIL / FIRST DIVISION)
         if any(k in row_upper for k in ("REMARKS", "RESULT", "FINAL RESULT", "DIVISION")):
-            m_res = re.search(r"\b(PASS|PASSED|FAIL|FAILED|COMPARTMENT|RE-APPEAR|PROMOTED|WITHHELD|DISTINCTION|FIRST DIVISION|SECOND DIVISION)\b", row_upper)
-            if m_res:
-                extracted["result_status"] = m_res.group(1)
+            # Ignore explanatory footer legends and notes (e.g., "Result Legend: ... COMP - Compartment")
+            if not any(k in row_upper for k in ("LEGEND", "NOTE", "EXPLANATION", "ABST -", "N.E. -")):
+                m_res = re.search(r"\b(PASS|PASSED|FAIL|FAILED|COMPARTMENT|RE-APPEAR|PROMOTED|WITHHELD|DISTINCTION|FIRST DIVISION|SECOND DIVISION)\b", row_upper)
+                if m_res:
+                    extracted["result_status"] = m_res.group(1)
 
         # Subject Code matching
         match = subject_code_pattern.search(row_upper)
