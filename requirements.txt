@@ -1,0 +1,14 @@
+opencv-python
+numpy
+Pillow
+easyocr
+ultralytics
+streamlit
+scikit-image
+fastapi
+uvicorn
+python-multipart
+qrcode
+pypdfium2
+pypdf
+pymupdf

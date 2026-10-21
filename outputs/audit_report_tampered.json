@@ -1,0 +1,48 @@
+{
+  "engine": "DocTamperGuard Master Verifier v1.0",
+  "timestamp": "2026-10-20T19:07:13.918547+00:00",
+  "status": "REJECTED",
+  "is_authentic": false,
+  "confidence_score": 94.5,
+  "processing_time_ms": 11409.2,
+  "summary": "MICRO-FORGERY DETECTED: 1 tampered cell(s) isolated. Zero-Tolerance Policy active -> Document rejected.",
+  "alignment": {
+    "was_warped": false,
+    "corners_detected": false
+  },
+  "counts": {
+    "total_segments": 65,
+    "grade_mark_cells": 18,
+    "flagged_patches": 1
+  },
+  "flagged_violations": [
+    {
+      "id": 44,
+      "text": "B",
+      "tight_bbox": [
+        861,
+        579,
+        870,
+        590
+      ],
+      "padded_bbox": [
+        857,
+        575,
+        874,
+        594
+      ],
+      "row_id": 11,
+      "tamper_confidence": 94.5,
+      "triggers_fired": [
+        "BASELINE_DRIFT",
+        "ELA_DISCONTINUITY"
+      ],
+      "forensic_reasons": [
+        "Baseline Alignment Drift (+2.00 px)",
+        "ELA Compression Discontinuity (p90: 4.33, 4.3x peer median)"
+      ],
+      "baseline_drift_px": 2.0,
+      "ela_p90": 4.333
+    }
+  ]
+}
